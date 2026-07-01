@@ -11,9 +11,7 @@ GROUP_ID = os.environ.get('GROUP_ID')
 CHAT_ID = os.environ.get('CHAT_ID')
 
 # ⚙️ НАСТРОЙКА ЗАМЕНЫ ССЫЛОК
-# student_ast_kazak - одинаковый тег в обоих соцсетях
 REPLACE_LINKS = {
-    # Меняем ссылку на Telegram → ссылку на ВК
     't.me/student_ast_kazak': 'vk.com/student_ast_kazak',
     'https://t.me/student_ast_kazak': 'vk.com/student_ast_kazak',
     'http://t.me/student_ast_kazak': 'vk.com/student_ast_kazak',
@@ -26,18 +24,13 @@ if not all([VK_TOKEN, TG_TOKEN, GROUP_ID, CHAT_ID]):
 last_post_id = None
 
 def replace_links(text):
-    """Заменяет ссылки в тексте по словарю REPLACE_LINKS"""
     if not text:
         return text
-    
     for old_link, new_link in REPLACE_LINKS.items():
         text = text.replace(old_link, new_link)
-    
     return text
 
 def send_to_telegram(text, photo_url=None):
-    """Отправляет текст и фото в Telegram"""
-    
     text = replace_links(text)
     
     if photo_url:
@@ -74,7 +67,13 @@ while True:
             post = response['response']['items'][0]
             post_id = post['id']
             
-            if post_id != last_post_id:
+            # Если last_post_id ещё не задан — запоминаем текущий пост и НЕ отправляем
+            if last_post_id is None:
+                last_post_id = post_id
+                print(f"[{datetime.now()}] Первый запуск. Последний пост: {post_id}")
+            
+            # Если появился НОВЫЙ пост (ID изменился)
+            elif post_id != last_post_id:
                 text = post.get('text', '')
                 
                 photo_url = None
@@ -86,9 +85,15 @@ while True:
                             break
                 
                 send_to_telegram(text, photo_url)
-                
                 last_post_id = post_id
                 print(f"[{datetime.now()}] Пост {post_id} отправлен")
+            
+            else:
+                print(f"[{datetime.now()}] Новых постов нет")
+        
+        else:
+            # Если стена пуста — просто ждём
+            print(f"[{datetime.now()}] Постов нет")
         
         time.sleep(60)
         
