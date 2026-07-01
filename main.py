@@ -46,9 +46,15 @@ def replace_all(text):
         text = text.replace(old, new)
     return text
 
-def send_telegram_message(text, photos=None):
+def send_telegram_message(text, photos=None, video_links=None):
+    """Отправляет текст, фото (альбомом) и ссылки на видео"""
     text = replace_all(text)
     text = make_first_line_bold(text)
+    
+    # Добавляем ссылки на видео в конец текста
+    if video_links:
+        video_text = "\n\n🎬 Видео:\n" + "\n".join(video_links)
+        text += video_text
     
     if photos:
         media = []
@@ -79,11 +85,12 @@ def send_telegram_message(text, photos=None):
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
+    # Запрашиваем 2 поста, чтобы обойти закрепленный
     response = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
             'owner_id': GROUP_ID,
-            'count': 1,
+            'count': 2,  # Запрашиваем 2 поста, чтобы найти первый незакрепленный
             'access_token': VK_TOKEN,
             'v': '5.131'
         }
@@ -97,22 +104,39 @@ try:
         print(f"[{datetime.now()}] Постов в группе нет")
         sys.exit(0)
     
-    post = response['response']['items'][0]
+    # Ищем первый НЕзакрепленный пост
+    post = None
+    for p in response['response']['items']:
+        if not p.get('is_pinned', False):
+            post = p
+            break
+    
+    # Если все посты закреплены (такое бывает) — берем первый
+    if post is None:
+        post = response['response']['items'][0]
+    
     post_id = post['id']
     text = post.get('text', '')
     
     print(f"[{datetime.now()}] Найден пост #{post_id}")
     
     photos = []
+    video_links = []
+    
     if 'attachments' in post:
         for attachment in post['attachments']:
             if attachment['type'] == 'photo':
                 sizes = attachment['photo']['sizes']
                 photos.append(sizes[-1]['url'])
+            elif attachment['type'] == 'video':
+                # Формируем ссылку на видео
+                video = attachment['video']
+                video_url = f"https://vk.com/video{video['owner_id']}_{video['id']}"
+                video_links.append(video_url)
     
-    print(f"[{datetime.now()}] Фото в посте: {len(photos)} шт.")
+    print(f"[{datetime.now()}] Фото в посте: {len(photos)} шт., видео: {len(video_links)} шт.")
     
-    send_telegram_message(text, photos if photos else None)
+    send_telegram_message(text, photos if photos else None, video_links if video_links else None)
     
     print(f"[{datetime.now()}] Пост #{post_id} успешно отправлен!")
     
