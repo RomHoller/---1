@@ -2,24 +2,16 @@ import requests
 import os
 import sys
 import re
-import signal
 from datetime import datetime
 
-# === ТАЙМАУТ 60 СЕКУНД ===
-def timeout_handler(signum, frame):
-    print("[ОШИБКА] Превышено время выполнения (60 секунд)")
-    sys.exit(1)
-
-signal.signal(signal.SIGALRM, timeout_handler)
-signal.alarm(60)
-
+# === ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
 VK_TOKEN = os.environ.get('VK_TOKEN')
 TG_TOKEN = os.environ.get('TG_TOKEN')
 GROUP_ID = os.environ.get('GROUP_ID')
 CHAT_ID = os.environ.get('CHAT_ID')
 
 if not all([VK_TOKEN, TG_TOKEN, GROUP_ID, CHAT_ID]):
-    print("Ошибка: не все переменные окружения заданы!")
+    print("[ОШИБКА] Не все переменные окружения заданы!")
     sys.exit(1)
 
 # === НАСТРОЙКА ЗАМЕН ===
@@ -36,92 +28,121 @@ REPLACE_TEXT = {
     'подписаться на сотню в TG': 'подписаться на сотню в ВК',
 }
 
-def replace_links_and_text(text):
+def make_first_line_bold(text):
+    """Делает первую строку текста жирной (до первого переноса)"""
     if not text:
         return text
-    for old_link, new_link in REPLACE_LINKS.items():
-        text = text.replace(old_link, new_link)
-    for old_text, new_text in REPLACE_TEXT.items():
-        text = text.replace(old_text, new_text)
+    
+    # Ищем первый перенос строки
+    parts = text.split('\n', 1)
+    
+    if len(parts) == 1:
+        # Если переноса нет — вся строка жирная
+        return f"<b>{parts[0]}</b>"
+    else:
+        # Первая строка — жирная, остальное — как есть
+        return f"<b>{parts[0]}</b>\n{parts[1]}"
+
+def replace_all(text):
+    if not text:
+        return text
+    for old, new in REPLACE_LINKS.items():
+        text = text.replace(old, new)
+    for old, new in REPLACE_TEXT.items():
+        text = text.replace(old, new)
     return text
 
-def send_media_group(photo_urls, caption=None):
-    if not photo_urls:
-        return None
-    media = []
-    for i, url in enumerate(photo_urls):
-        if i == 0 and caption:
-            media.append({
-                'type': 'photo',
-                'media': url,
-                'caption': caption,
+def send_telegram_message(text, photos=None):
+    """Отправляет сообщение с жирной первой строкой"""
+    # Сначала заменяем ссылки и текст
+    text = replace_all(text)
+    
+    # Затем делаем первую строку жирной
+    text = make_first_line_bold(text)
+    
+    if photos:
+        media = []
+        for i, url in enumerate(photos):
+            if i == 0 and text:
+                media.append({
+                    'type': 'photo',
+                    'media': url,
+                    'caption': text,
+                    'parse_mode': 'HTML'
+                })
+            else:
+                media.append({'type': 'photo', 'media': url})
+        
+        for i in range(0, len(media), 10):
+            batch = media[i:i+10]
+            requests.post(
+                f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup",
+                json={'chat_id': CHAT_ID, 'media': batch}
+            )
+    else:
+        requests.get(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            params={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
+        )
+
+def send_startup_notification():
+    """Отправляет уведомление о запуске бота"""
+    try:
+        requests.get(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            params={
+                'chat_id': CHAT_ID,
+                'text': f"🔄 Бот запущен в {datetime.now().strftime('%H:%M:%S')}",
                 'parse_mode': 'HTML'
-            })
-        else:
-            media.append({'type': 'photo', 'media': url})
-    response = requests.post(
-        f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup",
-        json={'chat_id': CHAT_ID, 'media': media}
-    )
-    return response
+            }
+        )
+        print("[ДИАГНОСТИКА] Уведомление о запуске отправлено")
+    except Exception as e:
+        print(f"[ДИАГНОСТИКА] Не удалось отправить уведомление: {e}")
 
-def send_text(text):
-    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    params = {'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
-    return requests.get(url, params=params)
-
+# === ОСНОВНАЯ ЛОГИКА ===
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
-    url = "https://api.vk.com/method/wall.get"
-    params = {
-        'owner_id': GROUP_ID,
-        'count': 1,
-        'access_token': VK_TOKEN,
-        'v': '5.131'
-    }
-    response = requests.get(url, params=params).json()
+    send_startup_notification()
     
-    # ДИАГНОСТИКА: выводим полный ответ VK
-    print(f"[ДИАГНОСТИКА] Ответ VK: {response}")
+    response = requests.get(
+        "https://api.vk.com/method/wall.get",
+        params={
+            'owner_id': GROUP_ID,
+            'count': 1,
+            'access_token': VK_TOKEN,
+            'v': '5.131'
+        }
+    ).json()
     
-    if response.get('response') and response['response']['items']:
-        post = response['response']['items'][0]
-        post_id = post['id']
-        text = post.get('text', '')
-        
-        print(f"[ДИАГНОСТИКА] Найден пост ID={post_id}, текст: {text[:100]}...")
-        
-        # Заменяем ссылки и текст
-        text = replace_links_and_text(text)
-        
-        # Собираем фото
-        photo_urls = []
-        if 'attachments' in post:
-            for attachment in post['attachments']:
-                if attachment['type'] == 'photo':
-                    sizes = attachment['photo']['sizes']
-                    photo_urls.append(sizes[-1]['url'])
-        
-        print(f"[ДИАГНОСТИКА] Фото: {len(photo_urls)} шт.")
-        
-        # Отправляем
-        if photo_urls:
-            for i in range(0, len(photo_urls), 10):
-                batch = photo_urls[i:i+10]
-                if i == 0:
-                    send_media_group(batch, text)
-                else:
-                    send_media_group(batch)
-        else:
-            send_text(text)
-        
-        print(f"[{datetime.now()}] Пост {post_id} отправлен (фото: {len(photo_urls)})")
-    else:
-        print(f"[{datetime.now()}] Постов нет или ошибка VK")
-        if 'error' in response:
-            print(f"[ОШИБКА VK] {response['error']}")
-
+    if 'error' in response:
+        print(f"[ОШИБКА VK] {response['error']}")
+        sys.exit(1)
+    
+    if not response.get('response') or not response['response']['items']:
+        print(f"[{datetime.now()}] Постов в группе нет")
+        sys.exit(0)
+    
+    post = response['response']['items'][0]
+    post_id = post['id']
+    text = post.get('text', '')
+    
+    print(f"[{datetime.now()}] Найден пост #{post_id}")
+    
+    photos = []
+    if 'attachments' in post:
+        for attachment in post['attachments']:
+            if attachment['type'] == 'photo':
+                sizes = attachment['photo']['sizes']
+                photos.append(sizes[-1]['url'])
+    
+    print(f"[{datetime.now()}] Фото в посте: {len(photos)} шт.")
+    
+    send_telegram_message(text, photos if photos else None)
+    
+    print(f"[{datetime.now()}] Пост #{post_id} успешно отправлен!")
+    
 except Exception as e:
-    print(f"[{datetime.now()}] ОШИБКА: {e}")
+    print(f"[{datetime.now()}] КРИТИЧЕСКАЯ ОШИБКА: {e}")
     sys.exit(1)
