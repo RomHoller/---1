@@ -1,19 +1,13 @@
 name: Repost VK to TG
 
 on:
-  # Запуск по расписанию. GitHub Actions использует UTC-время.
   schedule:
-    # Эта строчка означает "каждые 5 минут".
-    # Минимальный интервал для бесплатного тарифа — 5 минут.
     - cron: '*/5 * * * *'
-
-  # Это позволит запускать ваш скрипт вручную кнопкой на GitHub.
   workflow_dispatch:
 
 jobs:
   repost:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,7 +23,6 @@ jobs:
       - name: Run the reposter
         run: python main.py
         env:
-          # Токены и ID будут подставлены из секретов, которые вы создадите на следующем шаге
           VK_TOKEN: ${{ secrets.VK_TOKEN }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           GROUP_ID: ${{ secrets.GROUP_ID }}
