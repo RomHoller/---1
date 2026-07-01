@@ -29,18 +29,12 @@ REPLACE_TEXT = {
 }
 
 def make_first_line_bold(text):
-    """Делает первую строку текста жирной (до первого переноса)"""
     if not text:
         return text
-    
-    # Ищем первый перенос строки
     parts = text.split('\n', 1)
-    
     if len(parts) == 1:
-        # Если переноса нет — вся строка жирная
         return f"<b>{parts[0]}</b>"
     else:
-        # Первая строка — жирная, остальное — как есть
         return f"<b>{parts[0]}</b>\n{parts[1]}"
 
 def replace_all(text):
@@ -53,11 +47,7 @@ def replace_all(text):
     return text
 
 def send_telegram_message(text, photos=None):
-    """Отправляет сообщение с жирной первой строкой"""
-    # Сначала заменяем ссылки и текст
     text = replace_all(text)
-    
-    # Затем делаем первую строку жирной
     text = make_first_line_bold(text)
     
     if photos:
@@ -85,26 +75,9 @@ def send_telegram_message(text, photos=None):
             params={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
         )
 
-def send_startup_notification():
-    """Отправляет уведомление о запуске бота"""
-    try:
-        requests.get(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            params={
-                'chat_id': CHAT_ID,
-                'text': f"🔄 Бот запущен в {datetime.now().strftime('%H:%M:%S')}",
-                'parse_mode': 'HTML'
-            }
-        )
-        print("[ДИАГНОСТИКА] Уведомление о запуске отправлено")
-    except Exception as e:
-        print(f"[ДИАГНОСТИКА] Не удалось отправить уведомление: {e}")
-
 # === ОСНОВНАЯ ЛОГИКА ===
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
-    
-    send_startup_notification()
     
     response = requests.get(
         "https://api.vk.com/method/wall.get",
