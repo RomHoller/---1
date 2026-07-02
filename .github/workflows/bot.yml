@@ -1,4 +1,4 @@
-name: Bot
+name: Repost VK to TG
 
 on:
   schedule:
@@ -6,17 +6,36 @@ on:
   workflow_dispatch:
 
 jobs:
-  run:
+  repost:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: python main.py
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download last_post_id
+        uses: actions/download-artifact@v4
+        with:
+          name: last-post-id
+          path: .
+
+      - name: Run the reposter
+        run: python main.py
         env:
           VK_TOKEN: ${{ secrets.VK_TOKEN }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           GROUP_ID: ${{ secrets.GROUP_ID }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+
+      - name: Upload last_post_id
+        uses: actions/upload-artifact@v4
+        with:
+          name: last-post-id
+          path: last_post_id.txt
