@@ -1,7 +1,6 @@
 import requests
 import time
 import re
-import os
 from datetime import datetime
 
 VK_TOKEN = "сюда_свой_vk_токен"
@@ -23,18 +22,7 @@ BOLD_PHRASES = [
     'Подписаться на Сотню в ВК',
 ]
 
-LAST_ID_FILE = '/tmp/last_post_id.txt'
-
-def read_last_id():
-    try:
-        with open(LAST_ID_FILE, 'r') as f:
-            return int(f.read().strip())
-    except:
-        return None
-
-def save_last_id(post_id):
-    with open(LAST_ID_FILE, 'w') as f:
-        f.write(str(post_id))
+last_id = None
 
 def add_space_after_emoji(text):
     emoji_pattern = r'([\U0001F000-\U0001FFFF]|[\u2600-\u27BF]|[\u2000-\u206F]|[\u2300-\u23FF])'
@@ -70,7 +58,6 @@ while True:
         ).json()
         
         if r.get('response') and r['response']['items']:
-            # Ищем первый НЕзакрепленный пост
             post = None
             for p in r['response']['items']:
                 if not p.get('is_pinned', False):
@@ -79,10 +66,10 @@ while True:
             if post is None:
                 post = r['response']['items'][0]
             
-            last_id = read_last_id()
-            
-            # Если пост новый или бот только запустился
-            if last_id is None or post['id'] != last_id:
+            if last_id is None:
+                last_id = post['id']
+                print(f"[{datetime.now()}] Первый запуск. Запомнен пост {last_id}")
+            elif post['id'] != last_id:
                 text = format_text(post.get('text', ''))
                 
                 photos = []
@@ -110,10 +97,12 @@ while True:
                 else:
                     requests.get(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", params={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
                 
-                save_last_id(post['id'])
-                print(f"[{datetime.now()}] Пост {post['id']} отправлен")
+                last_id = post['id']
+                print(f"[{datetime.now()}] Пост {last_id} отправлен")
             else:
                 print(f"[{datetime.now()}] Новых постов нет")
+        else:
+            print(f"[{datetime.now()}] Ошибка VK: {r}")
         
         time.sleep(60)
     except Exception as e:
