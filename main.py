@@ -14,6 +14,7 @@ if not all([VK_TOKEN, TG_TOKEN, GROUP_ID, CHAT_ID]):
     print("[ОШИБКА] Не все переменные окружения заданы!")
     sys.exit(1)
 
+# === НАСТРОЙКИ ===
 REPLACE_LINKS = {
     't.me/student_ast_kazak': 'vk.com/student_ast_kazak',
     'https://t.me/student_ast_kazak': 'vk.com/student_ast_kazak',
@@ -28,29 +29,33 @@ BOLD_PHRASES = [
     'Подписаться на Сотню в ВК',
 ]
 
+LAST_ID_FILE = 'last_id.txt'
+
 def read_last_id():
-    """Читает ID из файла в репозитории"""
+    """Читает ID последнего отправленного поста из файла"""
     try:
-        if os.path.exists('last_post_id.txt'):
-            with open('last_post_id.txt', 'r') as f:
+        if os.path.exists(LAST_ID_FILE):
+            with open(LAST_ID_FILE, 'r') as f:
                 content = f.read().strip()
-                if content:
-                    return int(content)
+                return int(content) if content else None
     except:
         pass
     return None
 
-def save_last_id_to_repo(post_id):
-    """Сохраняет ID в файл и пушит в репозиторий"""
+def save_last_id(post_id):
+    """Сохраняет ID в файл и делает коммит"""
     try:
-        with open('last_post_id.txt', 'w') as f:
+        # Записываем ID в файл
+        with open(LAST_ID_FILE, 'w') as f:
             f.write(str(post_id))
         
-        repo_url = f"https://x-access-token:{os.environ.get('PAT_TOKEN')}@github.com/{os.environ.get('GITHUB_REPOSITORY')}.git"
+        # Настраиваем git
+        repo_url = f"https://x-access-token:{os.environ.get('GITHUB_TOKEN')}@github.com/{os.environ.get('GITHUB_REPOSITORY')}.git"
         
+        # Коммитим и пушим
         subprocess.run(['git', 'config', '--global', 'user.email', 'bot@github.com'], check=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions Bot'], check=True)
-        subprocess.run(['git', 'add', 'last_post_id.txt'], check=True)
+        subprocess.run(['git', 'add', LAST_ID_FILE], check=True)
         subprocess.run(['git', 'commit', '-m', f'Update last post ID to {post_id}'], check=True)
         subprocess.run(['git', 'push', repo_url, 'HEAD:main'], check=True)
         
@@ -78,12 +83,15 @@ def format_text(text):
     text = make_bold(text)
     return text
 
+# === ОСНОВНАЯ ЛОГИКА ===
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
+    # Читаем сохранённый ID
     last_id = read_last_id()
     print(f"[{datetime.now()}] Последний сохранённый ID: {last_id}")
     
+    # Запрос к VK
     r = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
@@ -102,6 +110,7 @@ try:
         print(f"[{datetime.now()}] Постов нет")
         sys.exit(0)
     
+    # Ищем первый НЕзакрепленный пост
     post = None
     for p in r['response']['items']:
         if not p.get('is_pinned', False):
@@ -113,10 +122,12 @@ try:
     post_id = post['id']
     print(f"[{datetime.now()}] Текущий пост: {post_id}")
     
+    # Если ID совпадает с сохранённым — пропускаем
     if last_id is not None and post_id == last_id:
         print(f"[{datetime.now()}] Пост {post_id} уже был отправлен. Пропускаем.")
         sys.exit(0)
     
+    # === ОТПРАВКА В TELEGRAM ===
     text = format_text(post.get('text', ''))
     
     photos = []
@@ -150,7 +161,8 @@ try:
             params={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
         )
     
-    save_last_id_to_repo(post_id)
+    # Сохраняем ID в репозиторий
+    save_last_id(post_id)
     print(f"[{datetime.now()}] Пост {post_id} отправлен (фото: {len(photos)}, видео: {len(video_links)})")
     
 except Exception as e:
