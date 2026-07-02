@@ -30,6 +30,7 @@ BOLD_PHRASES = [
 LAST_ID_FILE = 'last_post_id.txt'
 
 def read_last_id():
+    """Читает ID последнего отправленного поста из файла"""
     try:
         if os.path.exists(LAST_ID_FILE):
             with open(LAST_ID_FILE, 'r') as f:
@@ -40,12 +41,18 @@ def read_last_id():
                     return None
         else:
             return None
-    except:
+    except Exception as e:
+        print(f"[ОШИБКА ЧТЕНИЯ] {e}")
         return None
 
 def save_last_id(post_id):
-    with open(LAST_ID_FILE, 'w') as f:
-        f.write(str(post_id))
+    """Сохраняет ID последнего отправленного поста в файл"""
+    try:
+        with open(LAST_ID_FILE, 'w') as f:
+            f.write(str(post_id))
+        print(f"[СОХРАНЕНИЕ] ID {post_id} сохранён")
+    except Exception as e:
+        print(f"[ОШИБКА СОХРАНЕНИЯ] {e}")
 
 def add_space_after_emoji(text):
     emoji_pattern = r'([\U0001F000-\U0001FFFF]|[\u2600-\u27BF]|[\u2000-\u206F]|[\u2300-\u23FF])'
@@ -70,6 +77,11 @@ def format_text(text):
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
+    # Читаем сохранённый ID
+    last_id = read_last_id()
+    print(f"[{datetime.now()}] Последний сохранённый ID: {last_id}")
+    
+    # Запрос к VK
     r = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
@@ -98,10 +110,9 @@ try:
         post = r['response']['items'][0]
     
     post_id = post['id']
+    print(f"[{datetime.now()}] Текущий пост: {post_id}")
     
-    # Проверяем, не отправляли ли уже этот пост
-    last_id = read_last_id()
-    
+    # Если ID совпадает с сохранённым — пропускаем
     if last_id is not None and post_id == last_id:
         print(f"[{datetime.now()}] Пост {post_id} уже был отправлен ранее. Пропускаем.")
         sys.exit(0)
