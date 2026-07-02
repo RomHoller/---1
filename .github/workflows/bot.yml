@@ -20,6 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Шаг загрузки артефакта с явной проверкой существования
       - name: Download last_post_id (if exists)
         id: download-artifact
         continue-on-error: true
@@ -27,6 +28,14 @@ jobs:
         with:
           name: last-post-id
           path: .
+
+      # Если файла нет, создаем пустой, чтобы избежать ошибки в основном скрипте
+      - name: Create empty last_post_id.txt if not exists
+        run: |
+          if [ ! -f last_post_id.txt ]; then
+            echo "Файл last_post_id.txt не найден, создаем пустой"
+            touch last_post_id.txt
+          fi
 
       - name: Run the reposter
         run: python main.py
