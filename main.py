@@ -4,7 +4,6 @@ import sys
 import re
 from datetime import datetime
 
-# === ЧИТАЕМ СЕКРЕТЫ ИЗ ОКРУЖЕНИЯ (GITHUB ACTIONS) ===
 VK_TOKEN = os.environ.get('VK_TOKEN')
 TG_TOKEN = os.environ.get('TG_TOKEN')
 GROUP_ID = os.environ.get('GROUP_ID')
@@ -14,7 +13,6 @@ if not all([VK_TOKEN, TG_TOKEN, GROUP_ID, CHAT_ID]):
     print("[ОШИБКА] Не все переменные окружения заданы!")
     sys.exit(1)
 
-# === НАСТРОЙКИ ФОРМАТИРОВАНИЯ ===
 REPLACE_LINKS = {
     't.me/student_ast_kazak': 'vk.com/student_ast_kazak',
     'https://t.me/student_ast_kazak': 'vk.com/student_ast_kazak',
@@ -32,17 +30,20 @@ BOLD_PHRASES = [
 LAST_ID_FILE = 'last_post_id.txt'
 
 def read_last_id():
-    """Читает ID последнего отправленного поста из файла"""
     try:
         if os.path.exists(LAST_ID_FILE):
             with open(LAST_ID_FILE, 'r') as f:
-                return int(f.read().strip())
+                content = f.read().strip()
+                if content:
+                    return int(content)
+                else:
+                    return None
+        else:
+            return None
     except:
-        pass
-    return None
+        return None
 
 def save_last_id(post_id):
-    """Сохраняет ID последнего отправленного поста в файл"""
     with open(LAST_ID_FILE, 'w') as f:
         f.write(str(post_id))
 
@@ -66,11 +67,9 @@ def format_text(text):
     text = make_bold(text)
     return text
 
-# === ОСНОВНАЯ ЛОГИКА ===
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
-    # Запрашиваем 2 поста, чтобы обойти закрепленный
     r = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
