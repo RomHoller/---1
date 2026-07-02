@@ -1,0 +1,33 @@
+name: Repost VK to TG
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  repost:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # разрешение на коммиты в репозиторий
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # используем стандартный токен GitHub
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the reposter
+        run: python main.py
+        env:
+          VK_TOKEN: ${{ secrets.VK_TOKEN }}
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          GROUP_ID: ${{ secrets.GROUP_ID }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
