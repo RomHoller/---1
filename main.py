@@ -2,6 +2,7 @@ import requests
 import os
 import sys
 import re
+import subprocess
 from datetime import datetime
 
 VK_TOKEN = os.environ.get('VK_TOKEN')
@@ -27,30 +28,33 @@ BOLD_PHRASES = [
     'Подписаться на Сотню в ВК',
 ]
 
-LAST_ID_FILE = 'last_post_id.txt'
-
 def read_last_id():
-    """Читает ID последнего отправленного поста из файла"""
+    """Читает ID из файла в репозитории"""
     try:
-        if os.path.exists(LAST_ID_FILE):
-            with open(LAST_ID_FILE, 'r') as f:
+        if os.path.exists('last_post_id.txt'):
+            with open('last_post_id.txt', 'r') as f:
                 content = f.read().strip()
                 if content:
                     return int(content)
-                else:
-                    return None
-        else:
-            return None
-    except Exception as e:
-        print(f"[ОШИБКА ЧТЕНИЯ] {e}")
-        return None
+    except:
+        pass
+    return None
 
-def save_last_id(post_id):
-    """Сохраняет ID последнего отправленного поста в файл"""
+def save_last_id_to_repo(post_id):
+    """Сохраняет ID в файл и пушит в репозиторий"""
     try:
-        with open(LAST_ID_FILE, 'w') as f:
+        with open('last_post_id.txt', 'w') as f:
             f.write(str(post_id))
-        print(f"[СОХРАНЕНИЕ] ID {post_id} сохранён")
+        
+        repo_url = f"https://x-access-token:{os.environ.get('PAT_TOKEN')}@github.com/{os.environ.get('GITHUB_REPOSITORY')}.git"
+        
+        subprocess.run(['git', 'config', '--global', 'user.email', 'bot@github.com'], check=True)
+        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions Bot'], check=True)
+        subprocess.run(['git', 'add', 'last_post_id.txt'], check=True)
+        subprocess.run(['git', 'commit', '-m', f'Update last post ID to {post_id}'], check=True)
+        subprocess.run(['git', 'push', repo_url, 'HEAD:main'], check=True)
+        
+        print(f"[СОХРАНЕНИЕ] ID {post_id} сохранён в репозитории")
     except Exception as e:
         print(f"[ОШИБКА СОХРАНЕНИЯ] {e}")
 
@@ -77,11 +81,9 @@ def format_text(text):
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
-    # Читаем сохранённый ID
     last_id = read_last_id()
     print(f"[{datetime.now()}] Последний сохранённый ID: {last_id}")
     
-    # Запрос к VK
     r = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
@@ -100,7 +102,6 @@ try:
         print(f"[{datetime.now()}] Постов нет")
         sys.exit(0)
     
-    # Ищем первый НЕзакрепленный пост
     post = None
     for p in r['response']['items']:
         if not p.get('is_pinned', False):
@@ -112,12 +113,10 @@ try:
     post_id = post['id']
     print(f"[{datetime.now()}] Текущий пост: {post_id}")
     
-    # Если ID совпадает с сохранённым — пропускаем
     if last_id is not None and post_id == last_id:
-        print(f"[{datetime.now()}] Пост {post_id} уже был отправлен ранее. Пропускаем.")
+        print(f"[{datetime.now()}] Пост {post_id} уже был отправлен. Пропускаем.")
         sys.exit(0)
     
-    # Новый пост — отправляем
     text = format_text(post.get('text', ''))
     
     photos = []
@@ -133,7 +132,6 @@ try:
     if video_links:
         text += "\n\n🎬 Видео:\n" + "\n".join(video_links)
     
-    # Отправляем в Telegram
     if photos:
         media = []
         for i, url in enumerate(photos):
@@ -142,22 +140,17 @@ try:
             else:
                 media.append({'type': 'photo', 'media': url})
         for i in range(0, len(media), 10):
-            resp = requests.post(
+            requests.post(
                 f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup",
                 json={'chat_id': CHAT_ID, 'media': media[i:i+10]}
             )
-            if resp.status_code != 200:
-                print(f"[ОШИБКА TELEGRAM] {resp.text}")
     else:
-        resp = requests.get(
+        requests.get(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
             params={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
         )
-        if resp.status_code != 200:
-            print(f"[ОШИБКА TELEGRAM] {resp.text}")
     
-    # Сохраняем ID отправленного поста
-    save_last_id(post_id)
+    save_last_id_to_repo(post_id)
     print(f"[{datetime.now()}] Пост {post_id} отправлен (фото: {len(photos)}, видео: {len(video_links)})")
     
 except Exception as e:
