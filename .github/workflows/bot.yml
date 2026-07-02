@@ -20,21 +20,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # Шаг загрузки артефакта с явной проверкой существования
-      - name: Download last_post_id (if exists)
-        id: download-artifact
+      # Скачиваем артефакт, если он есть
+      - name: Download last_post_id
+        id: download
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: last-post-id
           path: .
 
-      # Если файла нет, создаем пустой, чтобы избежать ошибки в основном скрипте
-      - name: Create empty last_post_id.txt if not exists
+      # Если артефакта нет — создаём пустой файл
+      - name: Create empty file if not exists
         run: |
           if [ ! -f last_post_id.txt ]; then
-            echo "Файл last_post_id.txt не найден, создаем пустой"
-            touch last_post_id.txt
+            echo "0" > last_post_id.txt
+            echo "Создан новый файл last_post_id.txt с ID 0"
+          else
+            echo "Файл last_post_id.txt уже существует"
           fi
 
       - name: Run the reposter
@@ -45,8 +47,10 @@ jobs:
           GROUP_ID: ${{ secrets.GROUP_ID }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
 
+      # Загружаем артефакт для следующего запуска
       - name: Upload last_post_id
         uses: actions/upload-artifact@v4
         with:
           name: last-post-id
           path: last_post_id.txt
+          retention-days: 1
