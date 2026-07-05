@@ -32,7 +32,6 @@ BOLD_PHRASES = [
 LAST_ID_FILE = 'last_id.txt'
 
 def read_last_id():
-    """Читает ID последнего отправленного поста из файла"""
     try:
         if os.path.exists(LAST_ID_FILE):
             with open(LAST_ID_FILE, 'r') as f:
@@ -43,16 +42,12 @@ def read_last_id():
     return None
 
 def save_last_id(post_id):
-    """Сохраняет ID в файл и делает коммит"""
     try:
-        # Записываем ID в файл
         with open(LAST_ID_FILE, 'w') as f:
             f.write(str(post_id))
         
-        # Настраиваем git
         repo_url = f"https://x-access-token:{os.environ.get('GITHUB_TOKEN')}@github.com/{os.environ.get('GITHUB_REPOSITORY')}.git"
         
-        # Коммитим и пушим
         subprocess.run(['git', 'config', '--global', 'user.email', 'bot@github.com'], check=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions Bot'], check=True)
         subprocess.run(['git', 'add', LAST_ID_FILE], check=True)
@@ -67,7 +62,17 @@ def add_space_after_emoji(text):
     emoji_pattern = r'([\U0001F000-\U0001FFFF]|[\u2600-\u27BF]|[\u2000-\u206F]|[\u2300-\u23FF])'
     return re.sub(f'({emoji_pattern})(?![ ])', r'\1 ', text)
 
-def make_bold(text):
+def make_first_line_bold(text):
+    """Делает первую строку жирной (до первого переноса)"""
+    if not text:
+        return text
+    parts = text.split('\n', 1)
+    if len(parts) == 1:
+        return f"<b>{parts[0]}</b>"
+    else:
+        return f"<b>{parts[0]}</b>\n{parts[1]}"
+
+def make_phrases_bold(text):
     for phrase in BOLD_PHRASES:
         text = text.replace(phrase, f"<b>{phrase}</b>")
     return text
@@ -75,13 +80,45 @@ def make_bold(text):
 def format_text(text):
     if not text:
         return text
+    # Заменяем ссылки и текст
     for old, new in REPLACE_LINKS.items():
         text = text.replace(old, new)
     for old, new in REPLACE_TEXT.items():
         text = text.replace(old, new)
+    # Пробелы после эмодзи
     text = add_space_after_emoji(text)
-    text = make_bold(text)
+    # Жирный шрифт для первой строки
+    text = make_first_line_bold(text)
+    # Жирный шрифт для фраз
+    text = make_phrases_bold(text)
     return text
+
+def send_media_group(photos, caption):
+    """Отправляет все фото одним альбомом с подписью"""
+    if not photos:
+        return None
+    
+    media = []
+    for i, url in enumerate(photos):
+        if i == 0 and caption:
+            media.append({
+                'type': 'photo',
+                'media': url,
+                'caption': caption,
+                'parse_mode': 'HTML'
+            })
+        else:
+            media.append({'type': 'photo', 'media': url})
+    
+    # Отправляем по 10 фото (лимит Telegram)
+    for i in range(0, len(media), 10):
+        batch = media[i:i+10]
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup"
+        response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch})
+        if response.status_code != 200:
+            print(f"[ОШИБКА TELEGRAM] {response.text}")
+        else:
+            print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен")
 
 # === ОСНОВНАЯ ЛОГИКА ===
 try:
@@ -127,39 +164,44 @@ try:
         print(f"[{datetime.now()}] Пост {post_id} уже был отправлен. Пропускаем.")
         sys.exit(0)
     
-    # === ОТПРАВКА В TELEGRAM ===
-    text = format_text(post.get('text', ''))
+    # === ФОРМАТИРУЕМ ТЕКСТ ===
+    raw_text = post.get('text', '')
+    formatted_text = format_text(raw_text)
+    print(f"[ТЕКСТ] {formatted_text[:100]}...")
     
+    # === СОБИРАЕМ МЕДИА ===
     photos = []
     video_links = []
     if 'attachments' in post:
         for a in post['attachments']:
             if a['type'] == 'photo':
-                photos.append(a['photo']['sizes'][-1]['url'])
+                # Берём самую большую фотографию
+                sizes = a['photo']['sizes']
+                photos.append(sizes[-1]['url'])
             elif a['type'] == 'video':
                 v = a['video']
                 video_links.append(f"https://vk.com/video{v['owner_id']}_{v['id']}")
     
+    # Добавляем ссылки на видео в конец текста
     if video_links:
-        text += "\n\n🎬 Видео:\n" + "\n".join(video_links)
+        formatted_text += "\n\n🎬 Видео:\n" + "\n".join(video_links)
     
+    print(f"[МЕДИА] Фото: {len(photos)}, Видео: {len(video_links)}")
+    
+    # === ОТПРАВКА ===
     if photos:
-        media = []
-        for i, url in enumerate(photos):
-            if i == 0 and text:
-                media.append({'type': 'photo', 'media': url, 'caption': text, 'parse_mode': 'HTML'})
-            else:
-                media.append({'type': 'photo', 'media': url})
-        for i in range(0, len(media), 10):
-            requests.post(
-                f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup",
-                json={'chat_id': CHAT_ID, 'media': media[i:i+10]}
-            )
+        # Отправляем альбом с фото
+        send_media_group(photos, formatted_text)
     else:
-        requests.get(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            params={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
-        )
+        # Если фото нет — отправляем только текст
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+        response = requests.get(url, params={
+            'chat_id': CHAT_ID,
+            'text': formatted_text,
+            'parse_mode': 'HTML'
+        })
+        if response.status_code != 200:
+            print(f"[ОШИБКА TELEGRAM] {response.text}")
     
     # Сохраняем ID в репозиторий
     save_last_id(post_id)
