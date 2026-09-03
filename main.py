@@ -63,6 +63,7 @@ def add_space_after_emoji(text):
     return re.sub(f'({emoji_pattern})(?![ ])', r'\1 ', text)
 
 def make_first_line_bold(text):
+    """Делает первую строку жирной (до первого переноса)"""
     if not text:
         return text
     parts = text.split('\n', 1)
@@ -79,117 +80,55 @@ def make_phrases_bold(text):
 def format_text(text):
     if not text:
         return text
+    # Заменяем ссылки и текст
     for old, new in REPLACE_LINKS.items():
         text = text.replace(old, new)
     for old, new in REPLACE_TEXT.items():
         text = text.replace(old, new)
+    # Пробелы после эмодзи
     text = add_space_after_emoji(text)
+    # Жирный шрифт для первой строки
     text = make_first_line_bold(text)
+    # Жирный шрифт для фраз
     text = make_phrases_bold(text)
     return text
 
-def get_all_photo_urls(sizes):
-    """Получает все доступные размеры фото"""
-    urls = []
-    for size in sizes:
-        urls.append(size['url'])
-    return urls
-
 def send_media_group(photos, caption):
-    """Отправляет все фото одним альбомом"""
+    """Отправляет все фото одним альбомом с подписью"""
     if not photos:
-        send_text_only(caption)
-        return
+        return None
     
-    print(f"[ОТПРАВКА] Формируем альбом из {len(photos)} фото")
-    
-    # Формируем медиа-группу
     media = []
-    for i, photo in enumerate(photos):
+    for i, url in enumerate(photos):
         if i == 0 and caption:
             media.append({
                 'type': 'photo',
-                'media': photo,
+                'media': url,
                 'caption': caption,
                 'parse_mode': 'HTML'
             })
         else:
-            media.append({'type': 'photo', 'media': photo})
+            media.append({'type': 'photo', 'media': url})
     
     # Отправляем по 10 фото (лимит Telegram)
-    for batch_idx in range(0, len(media), 10):
-        batch = media[batch_idx:batch_idx+10]
+    for i in range(0, len(media), 10):
+        batch = media[i:i+10]
         url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup"
-        
-        try:
-            response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch}, timeout=30)
-            
-            if response.status_code == 200:
-                print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен")
-            else:
-                error_data = response.json()
-                error_msg = error_data.get('description', '')
-                print(f"[ОШИБКА] {error_msg}")
-                
-                # Если ошибка с фото - пробуем отправить альбом без подписи
-                if 'WEBPAGE_CURL_FAILED' in error_msg:
-                    print("[ПОВТОР] Пробуем отправить альбом без подписи...")
-                    send_media_group_no_caption(photos, caption)
-                else:
-                    send_text_only(caption)
-                    
-        except Exception as e:
-            print(f"[ОШИБКА] {e}")
-            send_text_only(caption)
-
-def send_media_group_no_caption(photos, caption):
-    """Отправляет альбом без подписи, а текст отдельно"""
-    send_text_only(caption)
-    
-    media = []
-    for photo in photos:
-        media.append({'type': 'photo', 'media': photo})
-    
-    for batch_idx in range(0, len(media), 10):
-        batch = media[batch_idx:batch_idx+10]
-        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup"
-        
-        try:
-            response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch}, timeout=30)
-            if response.status_code == 200:
-                print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен (без подписи)")
-            else:
-                print(f"[ОШИБКА] {response.text}")
-        except Exception as e:
-            print(f"[ОШИБКА] {e}")
-
-def send_text_only(text):
-    if not text:
-        return
-    
-    try:
-        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-        response = requests.post(url, json={
-            'chat_id': CHAT_ID,
-            'text': text,
-            'parse_mode': 'HTML',
-            'disable_web_page_preview': True
-        })
-        
-        if response.status_code == 200:
-            print("[ОК] Текст отправлен")
+        response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch})
+        if response.status_code != 200:
+            print(f"[ОШИБКА TELEGRAM] {response.text}")
         else:
-            print(f"[ОШИБКА] {response.text}")
-    except Exception as e:
-        print(f"[ОШИБКА] {e}")
+            print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен")
 
 # === ОСНОВНАЯ ЛОГИКА ===
 try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
+    # Читаем сохранённый ID
     last_id = read_last_id()
     print(f"[{datetime.now()}] Последний сохранённый ID: {last_id}")
     
+    # Запрос к VK
     r = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
@@ -208,6 +147,7 @@ try:
         print(f"[{datetime.now()}] Постов нет")
         sys.exit(0)
     
+    # Ищем первый НЕзакрепленный пост
     post = None
     for p in r['response']['items']:
         if not p.get('is_pinned', False):
@@ -219,45 +159,54 @@ try:
     post_id = post['id']
     print(f"[{datetime.now()}] Текущий пост: {post_id}")
     
+    # Если ID совпадает с сохранённым — пропускаем
     if last_id is not None and post_id == last_id:
         print(f"[{datetime.now()}] Пост {post_id} уже был отправлен. Пропускаем.")
         sys.exit(0)
     
+    # === ФОРМАТИРУЕМ ТЕКСТ ===
     raw_text = post.get('text', '')
     formatted_text = format_text(raw_text)
     print(f"[ТЕКСТ] {formatted_text[:100]}...")
     
+    # === СОБИРАЕМ МЕДИА ===
     photos = []
     video_links = []
-    
     if 'attachments' in post:
         for a in post['attachments']:
             if a['type'] == 'photo':
-                # Берем все размеры фото, чтобы был выбор
+                # Берём самую большую фотографию
                 sizes = a['photo']['sizes']
-                # Используем самый большой размер
-                photo_url = sizes[-1]['url']
-                photos.append(photo_url)
-                print(f"[ФОТО] Добавлено фото (размер: {sizes[-1]['type']})")
+                photos.append(sizes[-1]['url'])
             elif a['type'] == 'video':
                 v = a['video']
                 video_links.append(f"https://vk.com/video{v['owner_id']}_{v['id']}")
     
+    # Добавляем ссылки на видео в конец текста
     if video_links:
         formatted_text += "\n\n🎬 Видео:\n" + "\n".join(video_links)
     
     print(f"[МЕДИА] Фото: {len(photos)}, Видео: {len(video_links)}")
     
+    # === ОТПРАВКА ===
     if photos:
+        # Отправляем альбом с фото
         send_media_group(photos, formatted_text)
     else:
-        send_text_only(formatted_text)
+        # Если фото нет — отправляем только текст
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+        response = requests.get(url, params={
+            'chat_id': CHAT_ID,
+            'text': formatted_text,
+            'parse_mode': 'HTML'
+        })
+        if response.status_code != 200:
+            print(f"[ОШИБКА TELEGRAM] {response.text}")
     
+    # Сохраняем ID в репозиторий
     save_last_id(post_id)
-    print(f"[{datetime.now()}] Пост {post_id} обработан (фото: {len(photos)}, видео: {len(video_links)})")
+    print(f"[{datetime.now()}] Пост {post_id} отправлен (фото: {len(photos)}, видео: {len(video_links)})")
     
 except Exception as e:
     print(f"[{datetime.now()}] ОШИБКА: {e}")
-    import traceback
-    traceback.print_exc()
     sys.exit(1)
