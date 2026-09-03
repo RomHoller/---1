@@ -4,131 +4,178 @@ import sys
 import re
 import subprocess
 from datetime import datetime
+import io
 
-print("[ДИАГНОСТИКА] Скрипт запущен!")
+VK_TOKEN = os.environ.get('VK_TOKEN')
+TG_TOKEN = os.environ.get('TG_TOKEN')
+GROUP_ID = os.environ.get('GROUP_ID')
+CHAT_ID = os.environ.get('CHAT_ID')
 
-try:
-    VK_TOKEN = os.environ.get('VK_TOKEN')
-    TG_TOKEN = os.environ.get('TG_TOKEN')
-    GROUP_ID = os.environ.get('GROUP_ID')
-    CHAT_ID = os.environ.get('CHAT_ID')
+if not all([VK_TOKEN, TG_TOKEN, GROUP_ID, CHAT_ID]):
+    print("[ОШИБКА] Не все переменные окружения заданы!")
+    sys.exit(1)
 
-    print(f"[ДИАГНОСТИКА] VK_TOKEN: {'SET' if VK_TOKEN else 'NOT SET'}")
-    print(f"[ДИАГНОСТИКА] TG_TOKEN: {'SET' if TG_TOKEN else 'NOT SET'}")
-    print(f"[ДИАГНОСТИКА] GROUP_ID: {'SET' if GROUP_ID else 'NOT SET'}")
-    print(f"[ДИАГНОСТИКА] CHAT_ID: {'SET' if CHAT_ID else 'NOT SET'}")
+# === НАСТРОЙКИ ===
+REPLACE_LINKS = {
+    't.me/student_ast_kazak': 'vk.com/student_ast_kazak',
+    'https://t.me/student_ast_kazak': 'vk.com/student_ast_kazak',
+}
 
-    if not all([VK_TOKEN, TG_TOKEN, GROUP_ID, CHAT_ID]):
-        print("[ОШИБКА] Не все переменные окружения заданы!")
-        sys.exit(1)
+REPLACE_TEXT = {
+    'Подписаться на Сотню в TG': 'Подписаться на Сотню в ВК',
+}
 
-    print("[ДИАГНОСТИКА] Все переменные есть, продолжаем...")
+BOLD_PHRASES = [
+    'Слава Богу, что мы казаки!',
+    'Подписаться на Сотню в ВК',
+]
 
-    # === НАСТРОЙКИ ===
-    REPLACE_LINKS = {
-        't.me/student_ast_kazak': 'vk.com/student_ast_kazak',
-        'https://t.me/student_ast_kazak': 'vk.com/student_ast_kazak',
-    }
+LAST_ID_FILE = 'last_id.txt'
 
-    REPLACE_TEXT = {
-        'Подписаться на Сотню в TG': 'Подписаться на Сотню в ВК',
-    }
+def read_last_id():
+    try:
+        if os.path.exists(LAST_ID_FILE):
+            with open(LAST_ID_FILE, 'r') as f:
+                content = f.read().strip()
+                return int(content) if content else None
+    except:
+        pass
+    return None
 
-    BOLD_PHRASES = [
-        'Слава Богу, что мы казаки!',
-        'Подписаться на Сотню в ВК',
-    ]
+def save_last_id(post_id):
+    try:
+        with open(LAST_ID_FILE, 'w') as f:
+            f.write(str(post_id))
+        
+        repo_url = f"https://x-access-token:{os.environ.get('GITHUB_TOKEN')}@github.com/{os.environ.get('GITHUB_REPOSITORY')}.git"
+        
+        subprocess.run(['git', 'config', '--global', 'user.email', 'bot@github.com'], check=True)
+        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions Bot'], check=True)
+        subprocess.run(['git', 'add', LAST_ID_FILE], check=True)
+        subprocess.run(['git', 'commit', '-m', f'Update last post ID to {post_id}'], check=True)
+        subprocess.run(['git', 'push', repo_url, 'HEAD:main'], check=True)
+        
+        print(f"[СОХРАНЕНИЕ] ID {post_id} сохранён в репозитории")
+    except Exception as e:
+        print(f"[ОШИБКА СОХРАНЕНИЯ] {e}")
 
-    LAST_ID_FILE = 'last_id.txt'
+def add_space_after_emoji(text):
+    emoji_pattern = r'([\U0001F000-\U0001FFFF]|[\u2600-\u27BF]|[\u2000-\u206F]|[\u2300-\u23FF])'
+    return re.sub(f'({emoji_pattern})(?![ ])', r'\1 ', text)
 
-    def read_last_id():
-        try:
-            if os.path.exists(LAST_ID_FILE):
-                with open(LAST_ID_FILE, 'r') as f:
-                    content = f.read().strip()
-                    return int(content) if content else None
-        except:
-            pass
+def make_first_line_bold(text):
+    if not text:
+        return text
+    parts = text.split('\n', 1)
+    if len(parts) == 1:
+        return f"<b>{parts[0]}</b>"
+    else:
+        return f"<b>{parts[0]}</b>\n{parts[1]}"
+
+def make_phrases_bold(text):
+    for phrase in BOLD_PHRASES:
+        text = text.replace(phrase, f"<b>{phrase}</b>")
+    return text
+
+def format_text(text):
+    if not text:
+        return text
+    for old, new in REPLACE_LINKS.items():
+        text = text.replace(old, new)
+    for old, new in REPLACE_TEXT.items():
+        text = text.replace(old, new)
+    text = add_space_after_emoji(text)
+    text = make_first_line_bold(text)
+    text = make_phrases_bold(text)
+    return text
+
+def download_photo(url):
+    """Скачивает фото и возвращает его содержимое"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            return response.content
+        return None
+    except Exception as e:
+        print(f"[ОШИБКА СКАЧИВАНИЯ] {e}")
         return None
 
-    def save_last_id(post_id):
-        try:
-            with open(LAST_ID_FILE, 'w') as f:
-                f.write(str(post_id))
-            
-            repo_url = f"https://x-access-token:{os.environ.get('GITHUB_TOKEN')}@github.com/{os.environ.get('GITHUB_REPOSITORY')}.git"
-            
-            subprocess.run(['git', 'config', '--global', 'user.email', 'bot@github.com'], check=True)
-            subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Actions Bot'], check=True)
-            subprocess.run(['git', 'add', LAST_ID_FILE], check=True)
-            subprocess.run(['git', 'commit', '-m', f'Update last post ID to {post_id}'], check=True)
-            subprocess.run(['git', 'push', repo_url, 'HEAD:main'], check=True)
-            
-            print(f"[СОХРАНЕНИЕ] ID {post_id} сохранён в репозитории")
-        except Exception as e:
-            print(f"[ОШИБКА СОХРАНЕНИЯ] {e}")
+def upload_photo_to_telegram(photo_data):
+    """Загружает фото в Telegram и возвращает file_id"""
+    try:
+        files = {'photo': ('photo.jpg', photo_data)}
+        response = requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto",
+            data={'chat_id': CHAT_ID},
+            files=files,
+            timeout=30
+        )
+        if response.status_code == 200:
+            return response.json()['result']['photo'][-1]['file_id']
+        return None
+    except Exception as e:
+        print(f"[ОШИБКА ЗАГРУЗКИ] {e}")
+        return None
 
-    def add_space_after_emoji(text):
-        emoji_pattern = r'([\U0001F000-\U0001FFFF]|[\u2600-\u27BF]|[\u2000-\u206F]|[\u2300-\u23FF])'
-        return re.sub(f'({emoji_pattern})(?![ ])', r'\1 ', text)
-
-    def make_first_line_bold(text):
-        if not text:
-            return text
-        parts = text.split('\n', 1)
-        if len(parts) == 1:
-            return f"<b>{parts[0]}</b>"
+def send_media_group(photos, caption):
+    """Отправляет все фото одним альбомом"""
+    if not photos:
+        return None
+    
+    print(f"[ОТПРАВКА] Скачиваем и загружаем {len(photos)} фото...")
+    
+    file_ids = []
+    for i, url in enumerate(photos):
+        print(f"[ФОТО {i+1}] Скачиваем...")
+        photo_data = download_photo(url)
+        if photo_data:
+            print(f"[ФОТО {i+1}] Загружаем в Telegram...")
+            file_id = upload_photo_to_telegram(photo_data)
+            if file_id:
+                file_ids.append(file_id)
+                print(f"[ФОТО {i+1}] Загружено (file_id: {file_id[:20]}...)")
+            else:
+                print(f"[ФОТО {i+1}] Не удалось загрузить")
         else:
-            return f"<b>{parts[0]}</b>\n{parts[1]}"
+            print(f"[ФОТО {i+1}] Не удалось скачать")
+    
+    if not file_ids:
+        print("[ОШИБКА] Нет загруженных фото")
+        return None
+    
+    print(f"[ОТПРАВКА] Формируем альбом из {len(file_ids)} фото")
+    
+    media = []
+    for i, file_id in enumerate(file_ids):
+        if i == 0 and caption:
+            media.append({
+                'type': 'photo',
+                'media': file_id,
+                'caption': caption,
+                'parse_mode': 'HTML'
+            })
+        else:
+            media.append({'type': 'photo', 'media': file_id})
+    
+    for i in range(0, len(media), 10):
+        batch = media[i:i+10]
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup"
+        response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch})
+        if response.status_code != 200:
+            print(f"[ОШИБКА TELEGRAM] {response.text}")
+        else:
+            print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен")
 
-    def make_phrases_bold(text):
-        for phrase in BOLD_PHRASES:
-            text = text.replace(phrase, f"<b>{phrase}</b>")
-        return text
-
-    def format_text(text):
-        if not text:
-            return text
-        for old, new in REPLACE_LINKS.items():
-            text = text.replace(old, new)
-        for old, new in REPLACE_TEXT.items():
-            text = text.replace(old, new)
-        text = add_space_after_emoji(text)
-        text = make_first_line_bold(text)
-        text = make_phrases_bold(text)
-        return text
-
-    def send_media_group(photos, caption):
-        if not photos:
-            return None
-        
-        media = []
-        for i, url in enumerate(photos):
-            if i == 0 and caption:
-                media.append({
-                    'type': 'photo',
-                    'media': url,
-                    'caption': caption,
-                    'parse_mode': 'HTML'
-                })
-            else:
-                media.append({'type': 'photo', 'media': url})
-        
-        for i in range(0, len(media), 10):
-            batch = media[i:i+10]
-            url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup"
-            response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch})
-            if response.status_code != 200:
-                print(f"[ОШИБКА TELEGRAM] {response.text}")
-            else:
-                print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен")
-
+# === ОСНОВНАЯ ЛОГИКА ===
+try:
     print(f"[{datetime.now()}] Проверка новых постов...")
     
     last_id = read_last_id()
     print(f"[{datetime.now()}] Последний сохранённый ID: {last_id}")
     
-    print("[ДИАГНОСТИКА] Делаем запрос к VK...")
     r = requests.get(
         "https://api.vk.com/method/wall.get",
         params={
@@ -138,8 +185,6 @@ try:
             'v': '5.131'
         }
     ).json()
-    
-    print(f"[ДИАГНОСТИКА] Ответ VK получен: {str(r)[:200]}...")
     
     if 'error' in r:
         print(f"[ОШИБКА VK] {r['error']}")
