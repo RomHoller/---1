@@ -88,11 +88,36 @@ def format_text(text):
     text = make_phrases_bold(text)
     return text
 
+def get_working_photo_url(sizes):
+    """Пробует все размеры фото, пока не найдет рабочий URL"""
+    # Приоритет размеров (от самого большого к маленькому)
+    priority_order = ['w', 'z', 'y', 'x', 'r', 'q', 'p', 'o', 'm', 's']
+    
+    # Сначала пробуем по приоритету
+    for size_type in priority_order:
+        for size in sizes:
+            if size['type'] == size_type:
+                url = size['url']
+                # Проверяем доступность фото
+                try:
+                    response = requests.head(url, timeout=5)
+                    if response.status_code == 200:
+                        print(f"[ФОТО] Найден рабочий размер: {size_type}")
+                        return url
+                except:
+                    continue
+    
+    # Если ничего не работает - берем последний (самый большой) как запасной
+    print("[ФОТО] Не удалось найти рабочий URL, берем последний")
+    return sizes[-1]['url']
+
 def send_media_group(photos, caption):
     """Отправляет все фото одним альбомом с подписью"""
     if not photos:
         send_text_only(caption)
         return
+    
+    print(f"[ОТПРАВКА] Формируем альбом из {len(photos)} фото")
     
     # Формируем медиа-группу с подписью у первого фото
     media = []
@@ -133,18 +158,15 @@ def send_media_group(photos, caption):
 def send_media_group_remove_bad_photo(photos, caption, error_text):
     """Находит проблемное фото по ошибке и удаляет его"""
     # Парсим номер фото из ошибки
-    import re
     match = re.search(r'message #(\d+)', error_text)
     if match:
         bad_index = int(match.group(1)) - 1  # Telegram нумерует с 1
         if 0 <= bad_index < len(photos):
             print(f"[УДАЛЕНИЕ] Удаляем проблемное фото #{bad_index + 1}")
-            # Удаляем проблемное фото
             photos.pop(bad_index)
             
             if photos:
                 print(f"[ПОВТОР] Пробуем отправить альбом с {len(photos)} фото")
-                # Отправляем снова с подписью
                 return send_media_group(photos, caption)
             else:
                 print("[ОШИБКА] Не осталось фото для отправки")
@@ -231,7 +253,10 @@ try:
         for a in post['attachments']:
             if a['type'] == 'photo':
                 sizes = a['photo']['sizes']
-                photos.append(sizes[-1]['url'])
+                # Пробуем найти рабочий URL
+                photo_url = get_working_photo_url(sizes)
+                photos.append(photo_url)
+                print(f"[ФОТО] Добавлено фото")
             elif a['type'] == 'video':
                 v = a['video']
                 video_links.append(f"https://vk.com/video{v['owner_id']}_{v['id']}")
