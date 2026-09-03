@@ -4,7 +4,6 @@ import sys
 import re
 import subprocess
 from datetime import datetime
-import io
 
 VK_TOKEN = os.environ.get('VK_TOKEN')
 TG_TOKEN = os.environ.get('TG_TOKEN')
@@ -89,85 +88,98 @@ def format_text(text):
     text = make_phrases_bold(text)
     return text
 
-def download_photo(url):
-    """Скачивает фото и возвращает его содержимое"""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=30)
-        if response.status_code == 200:
-            return response.content
-        return None
-    except Exception as e:
-        print(f"[ОШИБКА СКАЧИВАНИЯ] {e}")
-        return None
-
-def upload_photo_to_telegram(photo_data):
-    """Загружает фото в Telegram и возвращает file_id"""
-    try:
-        files = {'photo': ('photo.jpg', photo_data)}
-        response = requests.post(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto",
-            data={'chat_id': CHAT_ID},
-            files=files,
-            timeout=30
-        )
-        if response.status_code == 200:
-            return response.json()['result']['photo'][-1]['file_id']
-        return None
-    except Exception as e:
-        print(f"[ОШИБКА ЗАГРУЗКИ] {e}")
-        return None
-
 def send_media_group(photos, caption):
-    """Отправляет все фото одним альбомом"""
+    """Отправляет все фото одним альбомом с подписью"""
     if not photos:
-        return None
+        send_text_only(caption)
+        return
     
-    print(f"[ОТПРАВКА] Скачиваем и загружаем {len(photos)} фото...")
-    
-    file_ids = []
-    for i, url in enumerate(photos):
-        print(f"[ФОТО {i+1}] Скачиваем...")
-        photo_data = download_photo(url)
-        if photo_data:
-            print(f"[ФОТО {i+1}] Загружаем в Telegram...")
-            file_id = upload_photo_to_telegram(photo_data)
-            if file_id:
-                file_ids.append(file_id)
-                print(f"[ФОТО {i+1}] Загружено (file_id: {file_id[:20]}...)")
-            else:
-                print(f"[ФОТО {i+1}] Не удалось загрузить")
-        else:
-            print(f"[ФОТО {i+1}] Не удалось скачать")
-    
-    if not file_ids:
-        print("[ОШИБКА] Нет загруженных фото")
-        return None
-    
-    print(f"[ОТПРАВКА] Формируем альбом из {len(file_ids)} фото")
-    
+    # Формируем медиа-группу с подписью у первого фото
     media = []
-    for i, file_id in enumerate(file_ids):
+    for i, url in enumerate(photos):
         if i == 0 and caption:
             media.append({
                 'type': 'photo',
-                'media': file_id,
+                'media': url,
                 'caption': caption,
                 'parse_mode': 'HTML'
             })
         else:
-            media.append({'type': 'photo', 'media': file_id})
+            media.append({'type': 'photo', 'media': url})
     
+    # Отправляем по 10 фото
     for i in range(0, len(media), 10):
         batch = media[i:i+10]
         url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMediaGroup"
-        response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch})
-        if response.status_code != 200:
-            print(f"[ОШИБКА TELEGRAM] {response.text}")
-        else:
+        response = requests.post(url, json={'chat_id': CHAT_ID, 'media': batch}, timeout=30)
+        
+        if response.status_code == 200:
             print(f"[ОТПРАВКА] Альбом из {len(batch)} фото отправлен")
+            return True
+        else:
+            error_text = response.text
+            print(f"[ОШИБКА] {error_text}")
+            
+            # Если ошибка из-за фото
+            if 'WEBPAGE_CURL_FAILED' in error_text:
+                # Находим проблемное фото и удаляем его
+                return send_media_group_remove_bad_photo(photos, caption, error_text)
+            else:
+                print(f"[ОШИБКА TELEGRAM] {error_text}")
+                return False
+    
+    return True
+
+def send_media_group_remove_bad_photo(photos, caption, error_text):
+    """Находит проблемное фото по ошибке и удаляет его"""
+    # Парсим номер фото из ошибки
+    import re
+    match = re.search(r'message #(\d+)', error_text)
+    if match:
+        bad_index = int(match.group(1)) - 1  # Telegram нумерует с 1
+        if 0 <= bad_index < len(photos):
+            print(f"[УДАЛЕНИЕ] Удаляем проблемное фото #{bad_index + 1}")
+            # Удаляем проблемное фото
+            photos.pop(bad_index)
+            
+            if photos:
+                print(f"[ПОВТОР] Пробуем отправить альбом с {len(photos)} фото")
+                # Отправляем снова с подписью
+                return send_media_group(photos, caption)
+            else:
+                print("[ОШИБКА] Не осталось фото для отправки")
+                send_text_only(caption)
+                return False
+    else:
+        # Если не можем определить проблемное фото - удаляем первое
+        if len(photos) > 1:
+            print("[УДАЛЕНИЕ] Не удалось определить проблемное фото, удаляем первое")
+            photos.pop(0)
+            return send_media_group(photos, caption)
+        else:
+            send_text_only(caption)
+            return False
+
+def send_text_only(text):
+    """Отправляет только текст"""
+    if not text:
+        return
+    
+    try:
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+        response = requests.post(url, json={
+            'chat_id': CHAT_ID,
+            'text': text,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': True
+        })
+        
+        if response.status_code == 200:
+            print("[ОК] Текст отправлен")
+        else:
+            print(f"[ОШИБКА] {response.text}")
+    except Exception as e:
+        print(f"[ОШИБКА] {e}")
 
 # === ОСНОВНАЯ ЛОГИКА ===
 try:
@@ -232,17 +244,10 @@ try:
     if photos:
         send_media_group(photos, formatted_text)
     else:
-        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-        response = requests.get(url, params={
-            'chat_id': CHAT_ID,
-            'text': formatted_text,
-            'parse_mode': 'HTML'
-        })
-        if response.status_code != 200:
-            print(f"[ОШИБКА TELEGRAM] {response.text}")
+        send_text_only(formatted_text)
     
     save_last_id(post_id)
-    print(f"[{datetime.now()}] Пост {post_id} отправлен (фото: {len(photos)}, видео: {len(video_links)})")
+    print(f"[{datetime.now()}] Пост {post_id} обработан (фото: {len(photos)}, видео: {len(video_links)})")
     
 except Exception as e:
     print(f"[{datetime.now()}] ОШИБКА: {e}")
